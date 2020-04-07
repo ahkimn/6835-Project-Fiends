@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <title>Collaborative Whiteboard</title>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/vue/2.5.13/vue.min.js"></script>
+        <link rel="stylesheet" type="text/css" href="stylesheets/css/draw.css">
+    </head>
+    <body>
+        <div id="draw">
+            <div class="app-wrapper">
+                <canvas id="canvas">
+                </canvas>
+                <div class="cursor" id="cursor"></div>
+                <div class="controls">
+                    <div class="btn-row">
+                        <div class="history" title="history">
+                            {{ history.length }}
+                        </div>
+                    </div>
+                    <div class="btn-row">
+                        <button type="button"
+                                v-on:click="removeHistoryItem"
+                                v-bind:class="{ disabled: !history.length }" title="Undo">
+                            <ion-icon name="arrow-undo-sharp"></ion-icon>
+                        </button>
+                        <button type="button"
+                                v-on:click="removeAllHistory"
+                                v-bind:class="{ disabled: !history.length }" title="Clear all">
+                            <ion-icon name="trash-sharp"></ion-icon>
+                        </button>
+                    </div>
+                    <div class="btn-row">
+                        <button title="Pick a brush size"
+                                v-on:click="popups.showSize = !popups.showSize"
+                                v-bind:class="{ active: popups.showSize }">
+                            <ion-icon name="radio-button-on-sharp"></ion-icon>
+                            <span class="size-icon">
+                                {{ size }}
+                            </span>
+                        </button>
+
+                        <div class="popup" v-if="popups.showSize">
+                            <div class="popup-title">
+                                Brush size
+                            </div>
+                            <label v-for="sizeItem in sizes" class="size-item">
+                                <input type="radio" name="size" v-model="size" v-bind:value="sizeItem">
+                                <span class="size"
+                                      v-bind:style="{width: sizeItem + 'px', height: sizeItem + 'px'}"
+                                      v-on:click="popups.showSize = !popups.showSize"></span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="btn-row">
+                        <button title="Pick a color"
+                                v-on:click="popups.showColor = !popups.showColor"
+                                v-bind:class="{ active: popups.showColor }">
+                            <ion-icon name="color-palette-sharp"></ion-icon>
+                            <span class="color-icon"
+                                  v-bind:style="{backgroundColor: color}">
+                            </span>
+                        </button>
+
+                        <div class="popup" v-if="popups.showColor">
+                            <div class="popup-title">
+                                Brush color
+                            </div>
+                            <label v-for="colorItem in colors" class="color-item">
+                                <input type="radio"
+                                       name="color"
+                                       v-model="color"
+                                       v-bind:value="colorItem">
+                                <span v-bind:class="'color color-' + colorItem"
+                                      v-bind:style="{backgroundColor: colorItem}"
+                                      v-on:click="popups.showColor = !popups.showColor"></span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="btn-row">
+                        <button title="Save"
+                                v-on:click="popups.showSave = !popups.showSave">
+                            <ion-icon name="cloud-download-sharp"></ion-icon>
+                        </button>
+
+                        <div class="popup" v-if="popups.showSave">
+                            <div class="popup-title">
+                                Save your design
+                            </div>
+                            <div class="form">
+                                <input type="text"
+                                       placeholder="Save name"
+                                       v-model="save.name">
+                                <div v-if="save.name.length < 3" class="text-faded">
+                                    <i>
+                                        Min 3 characters
+                                    </i>
+                                </div>
+                                <span class="btn"
+                                      v-on:click="saveItem">
+                                    Save as
+                                    <span class="text-faded">
+                                        {{ save.name }}
+                                    </span>
+                                </span>
+                            </div>
+
+                            <div class="saves" v-if="save.saveItems.length">
+                                <div class="popup-title">
+                                    Load a save
+                                </div>
+
+                                <div class="save-item"
+                                     v-for="item in save.saveItems">
+                                    <h3>{{ item.name }}</h3>
+                                    <span class="btn"
+                                          v-on:click="loadSave(item)">load</span>
+                                </div>
+                            </div>
+                        </div>
+
+                    </div>
+
+                    <div class="btn-row">
+                        <button title="Add a Page"
+                                v-on:click="addPage">
+                            <ion-icon name="add-sharp"></ion-icon>
+                        </button>
+                    </div>
+
+                    <div class="btn-row">
+                        <button title="Previous Page"
+                                v-on:click="previousPage"
+                                v-bind:class="{ disabled: currentPage === 0 }" title="Clear all">
+                            <ion-icon name="arrow-back-sharp"></ion-icon>
+                        </button>
+                        <button title="Next Page"
+                                v-on:click="nextPage"
+                                v-bind:class="{ disabled: currentPage >= pages.length - 1 }" title="Clear all">
+                            <ion-icon name="arrow-forward-sharp"></ion-icon>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <script src="draw.js"></script>
+        <script src="https://unpkg.com/ionicons@5.0.0/dist/ionicons.js"></script>
+    </body>
+</html>
