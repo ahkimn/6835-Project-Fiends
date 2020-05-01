@@ -61,7 +61,7 @@ def load_csv(directory, data=''):
     data_file = open(data_file, 'r')
     reader = csv.reader(data_file)
 
-    data = [row for row in reader]
+    data = [[int(i) for i in row if i != ''] for row in reader]
     data_file.close()
 
     return data
