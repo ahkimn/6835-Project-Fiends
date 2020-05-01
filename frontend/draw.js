@@ -67,12 +67,20 @@ var app = new Vue({
             draw.redraw();
         },
         addPage: () => {
-            var pageItem = app.history.slice();
-            app.pages.push(pageItem);
-            app.history = [];
-            draw.redraw();
-            app.pages.push(app.history.slice());
-            app.currentPage += 1;
+
+            if (!app.pages.length || app.currentPage === app.pages.length - 1) {
+
+                var pageItem = app.history.slice();
+                if (!app.pages) {
+                    app.pages.push(pageItem);
+                } else {
+                    app.pages[app.currentPage] = pageItem;
+                }
+                app.history = [];
+                draw.redraw();
+                app.pages.push(app.history.slice());
+                app.currentPage += 1;
+            }
         },
         previousPage: () => {
             if (app.currentPage > 0) {
@@ -89,6 +97,28 @@ var app = new Vue({
                 app.history = app.pages[app.currentPage].slice();
                 draw.redraw();
             }
+        },
+        test: () => {
+            // Broken... tried to simulate mouse movement. Supposed to be a demo button.
+            function wait(ms)
+            {
+                var d = new Date();
+                var d2 = null;
+                do { d2 = new Date(); }
+                while(d2-d < ms);
+            }
+
+            var csv = 'data/sample.csv';
+            d3.csv(csv).then(function(data) {
+                console.log(data);
+                for (var i = 0; i < data.length; i++) {
+                    var coords = data[i];
+                    jQuery(document.elementFromPoint(coords.x, coords.y)).mousedown();
+                    jQuery(document.elementFromPoint(coords.x, coords.y)).mousemove();
+                    jQuery(document.elementFromPoint(coords.x, coords.y)).mouseup();
+                    wait(coords.t);
+                }
+            });
         }
     }
 });
@@ -261,3 +291,47 @@ class Draw {
 }
 
 var draw = new Draw();
+
+// Speech Recognition
+var SpeechRecognition = SpeechRecognition || webkitSpeechRecognition;
+var SpeechGrammarList = SpeechGrammarList || webkitSpeechGrammarList;
+var SpeechRecognitionEvent = SpeechRecognitionEvent || webkitSpeechRecognitionEvent;
+
+var commands = [ 'add page', 'next page', 'previous page', 'clear page'];
+var grammar = '#JSGF V1.0; grammar commands; public <command> = ' + commands.join(' | ') + ' ;';
+
+var recognition = new SpeechRecognition();
+var speechRecognitionList = new SpeechGrammarList();
+
+speechRecognitionList.addFromString(grammar, 1);
+
+
+recognition.grammars = speechRecognitionList;
+recognition.continuous = true;
+recognition.lang = 'en-US';
+recognition.interimResults = false;
+recognition.maxAlternatives = 1;
+
+recognition.start();
+
+recognition.onresult = function(event) {
+    var current = event.resultIndex;
+
+    var command = event.results[current][0].transcript.trim();
+    switch (command) {
+        case 'add page':
+            app.addPage();
+            break;
+        case 'next page':
+            app.nextPage();
+            break;
+        case 'previous page':
+            app.previousPage();
+            break;
+        case 'clear page':
+            app.removeAllHistory();
+            break;
+        default:
+            console.log('invalid command');
+    }
+};
