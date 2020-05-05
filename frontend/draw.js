@@ -4,6 +4,7 @@ var app = new Vue({
         currentPage: 0,
         history: [],
         pages: [],
+        canvas: [],
         color: '#13c5f7',
         popups: {
             showColor: false,
@@ -43,6 +44,17 @@ var app = new Vue({
         weights: [ 2, 4, 6 ]
     },
     methods: {
+        toggle: () => {
+            var x = document.getElementById("controls");
+            var toggleIcon = document.getElementById("toggle-icon");
+            if (x.style.display === "none") {
+                x.style.display = "flex";
+                toggleIcon.name = 'eye-off-sharp';
+            } else {
+                x.style.display = "none";
+                toggleIcon.name = 'eye-sharp';
+            }
+        },
         removeHistoryItem: ()=>{
             app.history.splice(app.history.length-2, 1);
             draw.redraw();
@@ -51,16 +63,22 @@ var app = new Vue({
             app.history = [];
             draw.redraw();
         },
-        saveItem: ()=>{
-            if(app.save.name.length > 2){
-                var historyItem = {
-                    history: app.history.slice(),
-                    name: app.save.name
-                };
-
-                app.save.saveItems.push(historyItem);
-                app.save.name = "";
+        saveItem: (name)=>{
+            var currentCanvas = document.getElementById('canvas');
+            app.canvas[app.currentPage] = currentCanvas.toDataURL("image/jpeg", 1.0);
+            var pdf = new jsPDF();
+            var width = pdf.internal.pageSize.getWidth();
+            var height = pdf.internal.pageSize.getHeight();
+            for (var i = 0; i < app.canvas.length; i++) {
+                if (i > 0) {
+                    pdf.addPage();
+                }
+                currentCanvas = app.canvas[i];
+                pdf.addImage(currentCanvas, 'JPEG', 0, 0, width, height);
             }
+
+            pdf.save(`${name}.pdf`);
+
         },
         loadSave: (item)=>{
             app.history = item.history.slice();
@@ -71,20 +89,27 @@ var app = new Vue({
             if (!app.pages.length || app.currentPage === app.pages.length - 1) {
 
                 var pageItem = app.history.slice();
+                var currentCanvas = document.getElementById('canvas');
+                var pageCanvas = currentCanvas.toDataURL("image/jpeg", 1.0);
                 if (!app.pages) {
                     app.pages.push(pageItem);
+                    app.canvas.push(pageCanvas)
                 } else {
                     app.pages[app.currentPage] = pageItem;
+                    app.canvas[app.currentPage] = pageCanvas;
+
                 }
                 app.history = [];
                 draw.redraw();
                 app.pages.push(app.history.slice());
+                app.canvas.push(document.getElementById('canvas').toDataURL("image/jpeg", 1.0));
                 app.currentPage += 1;
             }
         },
         previousPage: () => {
             if (app.currentPage > 0) {
                 app.pages[app.currentPage] = app.history.slice();
+                app.canvas[app.currentPage] = document.getElementById('canvas').toDataURL("image/jpeg", 1.0);
                 app.currentPage -= 1;
                 app.history = app.pages[app.currentPage].slice();
                 draw.redraw();
@@ -93,33 +118,12 @@ var app = new Vue({
         nextPage: () => {
             if (app.currentPage < app.pages.length - 1) {
                 app.pages[app.currentPage] = app.history.slice();
+                app.canvas[app.currentPage] = document.getElementById('canvas').toDataURL("image/jpeg", 1.0);
                 app.currentPage += 1;
                 app.history = app.pages[app.currentPage].slice();
                 draw.redraw();
             }
         },
-        test: () => {
-            // Broken... tried to simulate mouse movement. Supposed to be a demo button.
-            function wait(ms)
-            {
-                var d = new Date();
-                var d2 = null;
-                do { d2 = new Date(); }
-                while(d2-d < ms);
-            }
-
-            var csv = 'data/sample.csv';
-            d3.csv(csv).then(function(data) {
-                console.log(data);
-                for (var i = 0; i < data.length; i++) {
-                    var coords = data[i];
-                    jQuery(document.elementFromPoint(coords.x, coords.y)).mousedown();
-                    jQuery(document.elementFromPoint(coords.x, coords.y)).mousemove();
-                    jQuery(document.elementFromPoint(coords.x, coords.y)).mouseup();
-                    wait(coords.t);
-                }
-            });
-        }
     }
 });
 
@@ -297,6 +301,10 @@ var SpeechRecognition = SpeechRecognition || webkitSpeechRecognition;
 var SpeechGrammarList = SpeechGrammarList || webkitSpeechGrammarList;
 var SpeechRecognitionEvent = SpeechRecognitionEvent || webkitSpeechRecognitionEvent;
 
+// Error Handling
+var synth = window.speechSynthesis;
+var errorSpeech = new SpeechSynthesisUtterance("Sorry, I could not understand that command.");
+
 var commands = [ 'add page', 'next page', 'previous page', 'clear page'];
 var grammar = '#JSGF V1.0; grammar commands; public <command> = ' + commands.join(' | ') + ' ;';
 
@@ -332,6 +340,6 @@ recognition.onresult = function(event) {
             app.removeAllHistory();
             break;
         default:
-            console.log('invalid command');
+            synth.speak(errorSpeech);
     }
 };
