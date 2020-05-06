@@ -29,8 +29,9 @@ def load_rgbd(directory, data=''):
     img_files = name_file.readlines()
     img_data = []
 
-    for f in img_files:
+    for f in img_files[0:100]:
         img_file = os.path.join(directory, img_dir, f.strip())
+        # img_file = directory + "/" + img_dir + "/" + f.strip()
 
         if data == 'rgb':
             img = cv2.flip(cv2.imread(img_file), 1)

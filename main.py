@@ -12,11 +12,13 @@ from matplotlib import pyplot as plt
 from scipy.ndimage.filters import gaussian_filter
 
 # Directory containing data sequences
-SEQUENCE_DIRECTORY = './data/sequences'
+# SEQUENCE_DIRECTORY = './data/sequences'
+# SEQUENCE_DIRECTORY = '../rgbd_scan/rgbd_scan/data'
+SEQUENCE_DIRECTORY = '../rgbd_scan/rgbd_scan/rgbd_scan'
 
 # Thresholds on HSV hue for selecting RoI
-HUE_HIGH = 14
-HUE_LOW = 3
+HUE_HIGH = 15
+HUE_LOW = 5
 
 # Minimum size of reasons of uniform hue to be used as candidate
 #   RoI
@@ -29,7 +31,16 @@ N_CALIBRATION_FRAMES = 10
 # Min max thresholds for depth distance to estimated plane
 #   for suspected finger locations
 DEPTH_NOISE_THRESHOLD = 15
-DEPTH_FINGER_THRESHOLD = 25
+DEPTH_FINGER_THRESHOLD = 130
+GRADIENT_THRESHOLD = 30
+
+#
+MIN_FINGER_AREA = 1000
+MAX_FINGER_AREA = 50000
+MIN_CIRCULARITY = 0.2
+MAX_CIRCULARITY = 0.8
+MIN_ASPECT_RATIO = 0.3
+MIN_EXTENT = 0.3
 
 # RandomState for deterministic sampling of points in
 #   plane estimation
@@ -41,7 +52,7 @@ INTERFACE_HEIGHT = 100
 INTERFACE_WIDTH = 100
 
 # Upscale factor of joint data relative to image data
-JOINT_SCALE = 2
+JOINT_SCALE = 1
 
 # Joint data horizontal flip relative to image data
 JOINT_FLIP = False
@@ -71,16 +82,25 @@ def threshold_img(img):
 
     best_contour = None
 
-    contours, _ = cv2.findContours(hue, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+    __, contours, __ = cv2.findContours(hue, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+    # cv2.imshow("hue", hue)
 
     # Iterate through contours; select one with largest area
     for c in contours:
         rect = cv2.boundingRect(c)
 
-        epsilon = 0.1 * cv2.arcLength(c, True)
+        for const in np.arange(0.05, 0.15, 0.01):
+            epsilon = const * cv2.arcLength(c, True)
+            # Simplify contour using polynomial approximation
+            approx = cv2.approxPolyDP(c, epsilon, True)
 
-        # Simplify contour using polynomial approximation
-        approx = cv2.approxPolyDP(c, epsilon, True)
+            if len(approx) == 4:
+                break
+
+        # img2 = cv2.drawContours(img, [approx], -1, (0, 255, 0), 3)
+        # cv2.imshow('ex_contour', img2)
+        # cv2.waitKey(0)
+
         rect = cv2.boundingRect(approx)
         x, y, w, h = rect
 
@@ -121,10 +141,13 @@ def get_bounds(rgb_list, n_frames):
         if len(c) == 4:
             valid_contours.append(c)
 
+    # print(valid_contours)
+
     # Use median contour values across frames as best approximation for RoI
     median_c = np.array([
         int(np.median([c.flatten()[i] for c in valid_contours]))
         for i in range(8)]).reshape(4, 1, 2)
+
     return median_c
 
 
@@ -302,14 +325,83 @@ def plt_depth_diff(depth, est_depth):
         for j in range(depth.shape[1]):
             tmp[i, j] = est_depth(j, i) - depth[i, j]
 
+    plt.figure(1)
     plt.imshow(-np.abs(tmp))
     plt.axis('off')
     plt.colorbar(fraction=0.026, pad=0.04)
     plt.title('Absolute Depth Difference to Estimated Plane', fontsize=18)
+
+    plt.figure(2)
+    plt.imshow(depth)
+    plt.axis('off')
+    plt.colorbar(fraction=0.026, pad=0.04)
+    plt.title('Absolute Depth Difference to Estimated Plane', fontsize=18)
+
     plt.show()
 
+def plt_depth_diff_map(depth, est_depth):
+    """
+    Plot depth deviation from estimate plane of RoI over entire image
 
-def est_depth_diff(depth, bounds, est_depth):
+    Args:
+        depth (np.ndarray): Depth image
+        est_depth (function): Function to calculate depth vs. image coordinate
+    """
+    tmp = np.zeros(depth.shape)
+    thresh = np.zeros((depth.shape[0], depth.shape[1]), dtype=np.uint8)
+    thresh2 = np.zeros((depth.shape[0], depth.shape[1]), dtype=np.uint8)
+
+    for i in range(depth.shape[0]):
+        for j in range(depth.shape[1]):
+            tmp_val = est_depth[i, j] - depth[i, j]
+            if tmp_val > 30 and tmp_val < 100:
+                tmp[i, j] = tmp_val
+                thresh[i, j] = 255
+            elif tmp_val > 0 and tmp_val < 25:
+                thresh2[i, j] = 255
+
+    gradients_float = cv2.Laplacian(depth, cv2.CV_64F, ksize=3)
+    gradients_float_abs = gradients_float.clip(min=0)
+    # gradients_float_abs = np.absolute(gradients_float)
+    gradients = np.uint8(gradients_float_abs)
+
+    ret, gradients_bin = cv2.threshold(gradients,30,255,cv2.THRESH_BINARY_INV)
+    kernel = np.ones((5,5),np.uint8)
+    gradients_bin = cv2.morphologyEx(gradients_bin, cv2.MORPH_OPEN, kernel)
+    # gradients_bin = cv2.erode(gradients_bin, kernel,iterations = 3)
+    mask = cv2.bitwise_and(thresh, gradients_bin)
+
+    kernel = np.ones((5,5),np.uint8)
+    # opening = cv2.dilate(cv2.erode(mask, kernel, 2), kernel, 2)
+    opening = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+
+    roi = cv2.bitwise_and(thresh, opening)
+    roi_depth = cv2.bitwise_and(depth, depth, mask=opening)
+    gradients_float = cv2.Laplacian(roi_depth, cv2.CV_64F, ksize=3)
+    gradients_float_abs = np.absolute(gradients_float)
+    gradients_roi = np.uint8(gradients_float_abs)
+
+    cv2.imshow("thresh", cv2.resize(thresh, (int(width/2.), int(height/2.))))
+    cv2.imshow("gradient", cv2.resize(gradients, (int(width/2.), int(height/2.))))
+    cv2.imshow("binary gradient", cv2.resize(gradients_bin, (int(width/2.), int(height/2.))))
+    cv2.imshow("mask", cv2.resize(mask, (int(width/2.), int(height/2.))))
+    cv2.imshow("opening", cv2.resize(opening, (int(width/2.), int(height/2.))))
+    # cv2.imshow("roi", opening)
+    cv2.imshow("gradients roi", cv2.resize(gradients_roi, (int(width/2.), int(height/2.))))
+    cv2.waitKey()
+    cv2.destroyAllWindows()
+
+
+def depth_gradient(depth):
+    gradients_float = cv2.Laplacian(depth, cv2.CV_64F, ksize=3)
+    gradients_float_abs = gradients_float.clip(min=0)
+    gradients = np.uint8(gradients_float_abs)
+    ret, gradients_bin = cv2.threshold(gradients, GRADIENT_THRESHOLD, 255, cv2.THRESH_BINARY_INV)
+
+    return gradients_bin
+
+
+def est_depth_diff(depth, bounds, est_depth, high = DEPTH_FINGER_THRESHOLD, low = DEPTH_NOISE_THRESHOLD):
     """
     Threshold depth image based on difference between true depth and
         estimated depth of RoI
@@ -335,11 +427,40 @@ def est_depth_diff(depth, bounds, est_depth):
 
     # Threshold depth difference
     mask = np.zeros((h, w), dtype=np.uint8)
-    valid = (diff < DEPTH_FINGER_THRESHOLD) & (diff > DEPTH_NOISE_THRESHOLD)
+    valid = (high < low) & (diff > low)
 
     mask[valid] = 255
 
     return mask
+
+def est_depth_diff_mat(depth, est_depth, high = DEPTH_FINGER_THRESHOLD, low = DEPTH_NOISE_THRESHOLD):
+    """
+    Threshold depth image based on difference between true depth and
+        estimated depth of RoI
+
+    Args:
+        depth (np.ndarray): True depth image
+        bounds (np.ndarray): Bounds of RoI
+        est_depth (function): Function to calculate depth vs. image coordinate
+
+    Returns:
+        TYPE: Description
+    """
+    h, w = depth.shape
+    diff = np.zeros((h, w))
+
+    # Calculate absolute depth difference between true depth image and
+    #   estimated plane of RoI
+    diff = est_depth - depth
+
+    # Threshold depth difference
+    mask = np.zeros((h, w), dtype=np.uint8)
+    valid = (diff < high) & (diff > low)
+
+    mask[valid] = 255
+
+    return mask
+
 
 
 def planeFit(points):
@@ -384,6 +505,72 @@ def draw_joints(img, offset, joint):
 
     return cv2.circle(img, (j_y, j_x), 2, (255, 0, 0), -1)
 
+def filter_contours(depth, contours):
+    best_contour = None
+    best_area = 0
+    for contour in contours:
+        area = cv2.contourArea(contour)
+        if area < MIN_FINGER_AREA or area > MAX_FINGER_AREA:
+            continue    
+
+        x,y,w,h = cv2.boundingRect(contour)
+        aspect_ratio = min(float(w)/h, float(h)/w)
+        if aspect_ratio < MIN_ASPECT_RATIO:
+            continue
+
+        rect_area = w*h
+        extent = float(area)/rect_area
+        if extent < MIN_EXTENT:
+            continue
+
+        perimeter = cv2.arcLength(contour, True)
+        circularity = 4 * np.pi * area / perimeter**2
+        if circularity < MIN_CIRCULARITY or circularity > MAX_CIRCULARITY:
+            continue
+
+        if (area > best_area):
+            best_contour = contour
+    return best_contour
+
+def find_finger_contour(depth, mask, contour):
+    print(len(contour), contour.shape)
+ 
+    height = depth.shape[0]
+    width = depth.shape[1]
+
+    # convexHull = cv2.convexHull(contour)
+    hand = np.zeros((height,width), dtype = np.uint8)
+    # center, radius = cv2.minEnclosingCircle(contour)
+    # hand = cv2.drawContours(hand, contour, -1, (255, 255, 255), 3)
+    cv2.fillPoly(hand, pts = contour, color=(255,255,255))
+
+    kernel = np.ones((49,49),np.uint8)
+    hand = cv2.dilate(hand, kernel, 1)
+
+    gradients_float = cv2.Laplacian(depth, cv2.CV_64F, ksize=3)
+    gradients_float_abs = gradients_float.clip(min=0)
+    # gradients_float_abs = np.absolute(gradients_float)
+    gradients = np.uint8(gradients_float_abs)
+    gradients_bin = cv2.inRange(gradients, 0, 0.5)
+    # cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+
+    # ret, gradients_bin = cv2.threshold(gradients, 30, 255, cv2.THRESH_BINARY_INV)
+    # ret, gradients_bin2 = cv2.threshold(gradients, 5, 255, cv2.THRESH_BINARY)
+
+    fingers = cv2.bitwise_and(gradients_bin, hand)
+    fingers = cv2.bitwise_and(fingers, mask)
+    fingers = cv2.morphologyEx(fingers, cv2.MORPH_OPEN, kernel)
+
+
+
+    cv2.namedWindow("hand")
+    cv2.namedWindow("finger")
+    cv2.namedWindow("finger mask")
+    cv2.imshow('hand', cv2.resize(hand, (int(width/2.), int(height/2.))))
+    cv2.imshow('finger', cv2.resize(fingers, (int(width/2.), int(height/2.))))
+    cv2.imshow('finger mask', cv2.resize(mask, (int(width/2.), int(height/2.))))
+
+
 
 if __name__ == '__main__':
 
@@ -402,6 +589,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     sequence_dir = os.path.join(SEQUENCE_DIRECTORY, args.sequence_dir)
+    # sequence_dir = SEQUENCE_DIRECTORY + "/" + args.sequence_dir
 
     # RGBD data sequence
     rgb = load_data.load_rgbd(sequence_dir, data='rgb')
@@ -417,59 +605,98 @@ if __name__ == '__main__':
     width = rgb[0].shape[1]
 
     # Rescale joint data
-    joints = joints / JOINT_SCALE
+    # joints = joints / JOINT_SCALE
 
-    # Flip image if joints are horizontally flipped (like RGB data)
-    if not JOINT_FLIP:
-        joints[:, 2] = width - joints[:, 2]
-        joints[:, 4] = width - joints[:, 4]
-        joints[:, 6] = width - joints[:, 6]
-        joints[:, 8] = width - joints[:, 8]
+    # # Flip image if joints are horizontally flipped (like RGB data)
+    # if not JOINT_FLIP:
+    #     joints[:, 2] = width - joints[:, 2]
+    #     joints[:, 4] = width - joints[:, 4]
+    #     joints[:, 6] = width - joints[:, 6]
+    #     joints[:, 8] = width - joints[:, 8]
 
-    J1, J2, J3, J4 = [], [], [], []
+    # J1, J2, J3, J4 = [], [], [], []
 
-    # Extract data for each tracked joint
-    for i in range(n_images):
-        j_1, j_2, j_3, j_4 = joints[i][2:4], joints[i][4:6], \
-            joints[i][6:8], joints[i][8:10]
-        J1.append(j_1)
-        J2.append(j_2)
-        J3.append(j_3)
-        J4.append(j_4)
+    # # Extract data for each tracked joint
+    # for i in range(n_images):
+    #     j_1, j_2, j_3, j_4 = joints[i][2:4], joints[i][4:6], \
+    #         joints[i][6:8], joints[i][8:10]
+    #     J1.append(j_1)
+    #     J2.append(j_2)
+    #     J3.append(j_3)
+    #     J4.append(j_4)
 
     # Get RoI bounds
-    bounds = get_bounds(rgb, N_CALIBRATION_FRAMES)
-    bound_rect = cv2.boundingRect(bounds)
-    x, y, w, h = bound_rect
+    # bounds = get_bounds(rgb, N_CALIBRATION_FRAMES)
+
+    roi = np.zeros((height,width), dtype = np.uint8)
+    # cv2.fillPoly(roi, pts =[bounds], color=(255,255,255))
+    roi = cv2.bitwise_not(roi)
+    # bound_rect = cv2.boundingRect(bounds)
+    # x, y, w, h = bound_rect
 
     # # Show RoI contour
     # img2 = cv2.drawContours(rgb[0], [bounds], -1, (0, 255, 0), 3)
     # cv2.imshow('ex_contour', img2)
+    # cv2.imshow('ex_filled', roi)
     # cv2.waitKey(0)
 
-    T = get_transform_matrix(bounds)
-    est_plane = est_plane_equation(d[0], bounds)
+    # T = get_transform_matrix(bounds)
+    # est_plane = est_plane_equation(d[0], bounds)
 
-    # plt_depth_diff(d[0], est_plane)
+    # est_plane_mat = np.zeros(d[0].shape)
+    # for i in range(d[0].shape[0]):
+    #     for j in range(d[0].shape[1]):
+    #         est_plane_mat[i, j] = est_plane(j, i)
+
+    # for i in range(10):
+    #     plt_depth_diff_map(d[54+i], est_plane_mat)
+    # plt_depth_diff(d[54], est_plane)
+
+    est_plane_mat = d[0]
 
     for i in range(n_images):
+        kernel = np.ones((5,5),np.uint8)
 
-        mask = est_depth_diff(d[i], bounds, est_plane)
-        # mask = gaussian_filter(mask, sigma=1.5)
+        depth = cv2.bitwise_and(d[i], d[i], mask = roi)
+        # mask = est_depth_diff(d[i], bounds, est_plane)
+        mask = est_depth_diff_mat(depth, est_plane_mat)
+        gradient = depth_gradient(depth)
+        gradient = cv2.morphologyEx(gradient, cv2.MORPH_OPEN, kernel)
+        mask = cv2.bitwise_and(mask, gradient)
 
-        contours, _ = cv2.findContours(
-            mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+        
+        # morph_gradient = cv2.morphologyEx(mask, cv2.MORPH_GRADIENT, kernel)
+        # opening = cv2.bitwise_and(mask, cv2.bitwise_not(morph_gradient))
+        # opening = cv2.erode(mask, kernel, 1)
+        opening = cv2.dilate(cv2.erode(mask, kernel, 2), kernel, 2)
+        # opening = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+        opening = gaussian_filter(opening, sigma=1.5)
 
-        tmp = np.zeros((mask.shape[0], mask.shape[1], 3), dtype=np.uint8)
+        modified_mask = opening
 
-        img = cv2.drawContours(tmp, contours, -1, (0, 0, 255), 3)
-        img = draw_joints(img, (x, y), J1[i])
+        __, contours, __ = cv2.findContours(
+            modified_mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
 
-        cv2.imshow('a', img)
-        cv2.waitKey(0)
+        filtered_contours = filter_contours(depth, contours)
 
-        cv2.imshow('b', mask)
-        cv2.waitKey(0)
+        img = np.zeros((modified_mask.shape[0], modified_mask.shape[1], 3), dtype=np.uint8)
+        if filtered_contours is not None:
+            finger_mask = est_depth_diff_mat(depth, est_plane_mat, 35, 10)
+            find_finger_contour(depth, finger_mask, filtered_contours)
+            img = cv2.drawContours(img, filtered_contours, -1, (0, 0, 255), 3)
+        
 
-        BEST_X = (x + RS.randint(w), y + RS.randint(h))
-        transform_coords(T, BEST_X)
+        # img = draw_joints(img, (x, y), J1[i])
+
+        cv2.namedWindow("contours")   
+        cv2.namedWindow("mask")   
+        cv2.namedWindow("opening")   
+
+        cv2.imshow('contours', cv2.resize(img, (int(width/2.), int(height/2.))))
+        cv2.imshow('mask', cv2.resize(mask, (int(width/2.), int(height/2.))))
+        cv2.imshow('opening', cv2.resize(opening, (int(width/2.), int(height/2.))))
+        print(i)
+        cv2.waitKey()
+
+        # BEST_X = (x + RS.randint(w), y + RS.randint(h))
+        # transform_coords(T, BEST_X)
