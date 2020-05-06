@@ -12,12 +12,13 @@
                 <canvas id="canvas">
                 </canvas>
                 <div class="cursor" id="cursor"></div>
-                <div class="controls">
-                    <div class="btn-row">
-                        <div class="history" title="history">
-                            {{ history.length }}
-                        </div>
-                    </div>
+                <div class="toggle">
+                    <button title="Toggle Toolbar"
+                            v-on:click="toggle">
+                        <ion-icon name="eye-off-sharp" id="toggle-icon"></ion-icon>
+                    </button>
+                </div>
+                <div class="controls" id="controls">
                     <div class="btn-row">
                         <button type="button"
                                 v-on:click="removeHistoryItem"
@@ -87,11 +88,11 @@
 
                         <div class="popup" v-if="popups.showSave">
                             <div class="popup-title">
-                                Save your design
+                                Save your whiteboard
                             </div>
                             <div class="form">
                                 <input type="text"
-                                       placeholder="Save name"
+                                       placeholder="File Name"
                                        v-model="save.name">
                                 <div v-if="save.name.length < 3" class="text-faded">
                                     <i>
@@ -99,25 +100,12 @@
                                     </i>
                                 </div>
                                 <span class="btn"
-                                      v-on:click="saveItem">
+                                      v-on:click="saveItem(save.name)">
                                     Save as
                                     <span class="text-faded">
                                         {{ save.name }}
                                     </span>
                                 </span>
-                            </div>
-
-                            <div class="saves" v-if="save.saveItems.length">
-                                <div class="popup-title">
-                                    Load a save
-                                </div>
-
-                                <div class="save-item"
-                                     v-for="item in save.saveItems">
-                                    <h3>{{ item.name }}</h3>
-                                    <span class="btn"
-                                          v-on:click="loadSave(item)">load</span>
-                                </div>
                             </div>
                         </div>
 
@@ -143,17 +131,11 @@
                             <ion-icon name="arrow-forward-sharp"></ion-icon>
                         </button>
                     </div>
-
-                    <div class="btn-row">
-                        <button title="Test"
-                                v-on:click="test">
-                            <ion-icon name="bug-outline"></ion-icon>
-                        </button>
-                    </div>
                 </div>
             </div>
         </div>
         <script src="draw.js"></script>
+        <script src="https://unpkg.com/jspdf@latest/dist/jspdf.min.js"></script>
         <script src="https://unpkg.com/ionicons@5.0.0/dist/ionicons.js"></script>
         <script src="https://d3js.org/d3.v5.js"></script>
     </body>
