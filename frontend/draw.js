@@ -340,6 +340,6 @@ recognition.onresult = function(event) {
             app.removeAllHistory();
             break;
         default:
-            synth.speak(errorSpeech);
+            console.log("Error, command not understood.");
     }
 };
