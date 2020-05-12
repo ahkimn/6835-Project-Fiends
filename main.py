@@ -6,14 +6,15 @@ import load_data
 import os
 import cv2
 import numpy as np
+import datetime
 from numpy.linalg import svd
 from matplotlib import pyplot as plt
 
 from scipy.ndimage.filters import gaussian_filter
 
 # Directory containing data sequences
+# UPDATE THIS WITH THE LOCATION ON YOUR MACHINE
 # SEQUENCE_DIRECTORY = './data/sequences'
-# SEQUENCE_DIRECTORY = '../rgbd_scan/rgbd_scan/data'
 SEQUENCE_DIRECTORY = '../rgbd_scan/rgbd_scan/rgbd_scan'
 
 # Thresholds on HSV hue for selecting RoI
@@ -29,18 +30,32 @@ MIN_PLANE = 10000
 N_CALIBRATION_FRAMES = 10
 
 # Min max thresholds for depth distance to estimated plane
+#   for suspected hand locations
+DEPTH_HAND_NOISE_THRESHOLD = 30
+DEPTH_HAND_THRESHOLD = 130
+
+# Min max thresholds for depth distance to estimated plane
 #   for suspected finger locations
-DEPTH_NOISE_THRESHOLD = 15
-DEPTH_FINGER_THRESHOLD = 130
+DEPTH_FINGER_NOISE_THRESHOLD = 0
+DEPTH_FINGER_THRESHOLD = 70
+
+
 GRADIENT_THRESHOLD = 30
 
-#
-MIN_FINGER_AREA = 1000
-MAX_FINGER_AREA = 50000
+# Top depth different value for hand to be near enough for fingers to touch
+HAND_TOP_THRESHOLD = 60
+
+# Contour parameters
+MIN_HAND_AREA = 1000
+MAX_HAND_AREA = 50000
 MIN_CIRCULARITY = 0.2
 MAX_CIRCULARITY = 0.8
-MIN_ASPECT_RATIO = 0.3
-MIN_EXTENT = 0.3
+MIN_ASPECT_RATIO = 0.2
+MIN_EXTENT = 0.1
+
+# Smoothing paramemters; we only active on large jump
+MAX_JUMP = 100
+JUMP_VALUE = 0.5
 
 # RandomState for deterministic sampling of points in
 #   plane estimation
@@ -56,6 +71,12 @@ JOINT_SCALE = 1
 
 # Joint data horizontal flip relative to image data
 JOINT_FLIP = False
+
+def get_min_background(depth_list, n_frames):
+    min_depth = depth_list[0]
+    for i in range(n_frames):
+        min_depth = np.minimum(min_depth, depth_list[i])
+    return min_depth
 
 
 def threshold_img(img):
@@ -258,6 +279,7 @@ def transform_coords(T, coords):
     if ui_coords[1] > INTERFACE_HEIGHT or ui_coords[1] < 0:
         return None
 
+    print(ui_coords[:2])
     return ui_coords[:2]
 
 
@@ -316,7 +338,7 @@ def plt_depth_diff(depth, est_depth):
     Plot depth deviation from estimate plane of RoI over entire image
 
     Args:
-        depth (np.ndarray): Depth image
+        depth (np.ndarray): Depth map
         est_depth (function): Function to calculate depth vs. image coordinate
     """
     tmp = np.zeros(depth.shape)
@@ -329,23 +351,28 @@ def plt_depth_diff(depth, est_depth):
     plt.imshow(-np.abs(tmp))
     plt.axis('off')
     plt.colorbar(fraction=0.026, pad=0.04)
+    plt.clim(-500, 0)
     plt.title('Absolute Depth Difference to Estimated Plane', fontsize=18)
 
     plt.figure(2)
     plt.imshow(depth)
     plt.axis('off')
     plt.colorbar(fraction=0.026, pad=0.04)
-    plt.title('Absolute Depth Difference to Estimated Plane', fontsize=18)
+    plt.title('Raw Depth Map', fontsize=18)
 
     plt.show()
 
 def plt_depth_diff_map(depth, est_depth):
     """
-    Plot depth deviation from estimate plane of RoI over entire image
+    Plot depth deviation from estimate plane of RoI over entire image using 
+        saved background depth map
 
     Args:
-        depth (np.ndarray): Depth image
-        est_depth (function): Function to calculate depth vs. image coordinate
+        depth (np.ndarray): Depth map
+        est_depth (np.ndarray): Projection surface depth map
+
+    Note:
+        THIS IS MOSTLY FOR DEBUGGING AND TESTING
     """
     tmp = np.zeros(depth.shape)
     thresh = np.zeros((depth.shape[0], depth.shape[1]), dtype=np.uint8)
@@ -354,7 +381,7 @@ def plt_depth_diff_map(depth, est_depth):
     for i in range(depth.shape[0]):
         for j in range(depth.shape[1]):
             tmp_val = est_depth[i, j] - depth[i, j]
-            if tmp_val > 30 and tmp_val < 100:
+            if tmp_val > 30 and tmp_val < 130:
                 tmp[i, j] = tmp_val
                 thresh[i, j] = 255
             elif tmp_val > 0 and tmp_val < 25:
@@ -362,17 +389,14 @@ def plt_depth_diff_map(depth, est_depth):
 
     gradients_float = cv2.Laplacian(depth, cv2.CV_64F, ksize=3)
     gradients_float_abs = gradients_float.clip(min=0)
-    # gradients_float_abs = np.absolute(gradients_float)
     gradients = np.uint8(gradients_float_abs)
 
     ret, gradients_bin = cv2.threshold(gradients,30,255,cv2.THRESH_BINARY_INV)
     kernel = np.ones((5,5),np.uint8)
     gradients_bin = cv2.morphologyEx(gradients_bin, cv2.MORPH_OPEN, kernel)
-    # gradients_bin = cv2.erode(gradients_bin, kernel,iterations = 3)
     mask = cv2.bitwise_and(thresh, gradients_bin)
 
     kernel = np.ones((5,5),np.uint8)
-    # opening = cv2.dilate(cv2.erode(mask, kernel, 2), kernel, 2)
     opening = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
 
     roi = cv2.bitwise_and(thresh, opening)
@@ -386,22 +410,28 @@ def plt_depth_diff_map(depth, est_depth):
     cv2.imshow("binary gradient", cv2.resize(gradients_bin, (int(width/2.), int(height/2.))))
     cv2.imshow("mask", cv2.resize(mask, (int(width/2.), int(height/2.))))
     cv2.imshow("opening", cv2.resize(opening, (int(width/2.), int(height/2.))))
-    # cv2.imshow("roi", opening)
     cv2.imshow("gradients roi", cv2.resize(gradients_roi, (int(width/2.), int(height/2.))))
     cv2.waitKey()
     cv2.destroyAllWindows()
 
 
 def depth_gradient(depth):
+    """
+    Calculate and binarize image gradient of depth map using given threshold
+
+    Args:
+        depth (np.ndarray): Depth map
+    """
     gradients_float = cv2.Laplacian(depth, cv2.CV_64F, ksize=3)
     gradients_float_abs = gradients_float.clip(min=0)
     gradients = np.uint8(gradients_float_abs)
+
     ret, gradients_bin = cv2.threshold(gradients, GRADIENT_THRESHOLD, 255, cv2.THRESH_BINARY_INV)
 
     return gradients_bin
 
 
-def est_depth_diff(depth, bounds, est_depth, high = DEPTH_FINGER_THRESHOLD, low = DEPTH_NOISE_THRESHOLD):
+def est_depth_diff(depth, bounds, est_depth, high = DEPTH_HAND_THRESHOLD, low = DEPTH_HAND_NOISE_THRESHOLD):
     """
     Threshold depth image based on difference between true depth and
         estimated depth of RoI
@@ -412,7 +442,10 @@ def est_depth_diff(depth, bounds, est_depth, high = DEPTH_FINGER_THRESHOLD, low 
         est_depth (function): Function to calculate depth vs. image coordinate
 
     Returns:
-        TYPE: Description
+        mask: binary image of thresholded depth difference map
+
+    Note:
+        This is DEPRECATED, as using a np.ndarray to store the projection surface depth map is faster
     """
     bound_rect = cv2.boundingRect(bounds)
     x, y, w, h = bound_rect
@@ -433,24 +466,27 @@ def est_depth_diff(depth, bounds, est_depth, high = DEPTH_FINGER_THRESHOLD, low 
 
     return mask
 
-def est_depth_diff_mat(depth, est_depth, high = DEPTH_FINGER_THRESHOLD, low = DEPTH_NOISE_THRESHOLD):
+def est_depth_diff_mat(depth, est_depth, high = DEPTH_HAND_THRESHOLD, low = DEPTH_HAND_NOISE_THRESHOLD):
     """
     Threshold depth image based on difference between true depth and
         estimated depth of RoI
 
     Args:
         depth (np.ndarray): True depth image
-        bounds (np.ndarray): Bounds of RoI
-        est_depth (function): Function to calculate depth vs. image coordinate
+        est_depth (np.ndarray): Projection surface depth map
 
     Returns:
-        TYPE: Description
+        mask: binary image of thresholded depth difference map
+        diff: depth difference map
+
+    Notes:
+        We mask with the ROI bounding region before
+        This uses est_depth as a mat 
     """
     h, w = depth.shape
     diff = np.zeros((h, w))
 
-    # Calculate absolute depth difference between true depth image and
-    #   estimated plane of RoI
+    # Calculate absolute depth difference between true depth image and projection surface
     diff = est_depth - depth
 
     # Threshold depth difference
@@ -459,7 +495,7 @@ def est_depth_diff_mat(depth, est_depth, high = DEPTH_FINGER_THRESHOLD, low = DE
 
     mask[valid] = 255
 
-    return mask
+    return mask, diff
 
 
 
@@ -487,12 +523,12 @@ def draw_joints(img, offset, joint):
     """Summary
 
     Args:
-        img (TYPE): Description
-        offset (TYPE): Description
-        joint (TYPE): Description
+        img (np.ndarray): color image to draw on
+        offset (float, float): (x,y) offset to apply to joint coordinates
+        joint (float, float): joint coordinates
 
     Returns:
-        TYPE: Description
+        img (np.ndarray): color image with joints drawn
     """
     x, y = offset
     j_x = int(joint[0] - x)
@@ -505,12 +541,28 @@ def draw_joints(img, offset, joint):
 
     return cv2.circle(img, (j_y, j_x), 2, (255, 0, 0), -1)
 
-def filter_contours(depth, contours):
+def filter_contours(contours):
+    """
+    Filter for hand contours, returning only the contour of a hand.
+    We filter for contour area, aspect ratio, circularity, and extent
+
+
+    Args:
+        contours (list of (list of (float, float))): List of contours, where each contour 
+            is a list of points corresponding to contour points
+
+    Returns:
+        best_contour (list of (float, float)): List of points of best contour
+
+    Note:
+        For now, this means that we can only track one hand. But we can easily 
+            modify the code to return multiple matching contours to work with multiple hands
+    """
     best_contour = None
     best_area = 0
     for contour in contours:
         area = cv2.contourArea(contour)
-        if area < MIN_FINGER_AREA or area > MAX_FINGER_AREA:
+        if area < MIN_HAND_AREA or area > MAX_HAND_AREA:
             continue    
 
         x,y,w,h = cv2.boundingRect(contour)
@@ -532,44 +584,96 @@ def filter_contours(depth, contours):
             best_contour = contour
     return best_contour
 
-def find_finger_contour(depth, mask, contour):
-    print(len(contour), contour.shape)
- 
-    height = depth.shape[0]
-    width = depth.shape[1]
+def find_finger_contour(depth_diff, mask, contour):
+    """
+    Get approximation of finger locations 
 
-    # convexHull = cv2.convexHull(contour)
+
+    Args:
+        depth_diff:
+        contour (list of (float, float)): Hand contour
+
+    Returns:
+        top_point (float, float): (x, y) finger coordinate
+        finger_contour (list of (float, float)): List of points of finger contour
+    """
+
+    height = depth_diff.shape[0]
+    width = depth_diff.shape[1]
+
+    # Mask depth difference map to only hand contour
     hand = np.zeros((height,width), dtype = np.uint8)
-    # center, radius = cv2.minEnclosingCircle(contour)
-    # hand = cv2.drawContours(hand, contour, -1, (255, 255, 255), 3)
     cv2.fillPoly(hand, pts = contour, color=(255,255,255))
+    hand_depth_diff = cv2.bitwise_and(depth_diff, depth_diff, mask = hand)
 
+    # Get depth difference of top-most point in hand
+    c = max([contour], key=cv2.contourArea)
+    top_point = tuple(c[c[:, :, 1].argmin()][0])
+    top_depth = hand_depth_diff[top_point[1], top_point[0]]
+
+    # Ignore all cases where the hand isn't close enough to the projection surface
+    if (top_depth > HAND_TOP_THRESHOLD):
+        return ((-1,-1), [])
+
+    # Dilate hand to get region around hand to look for finger
     kernel = np.ones((49,49),np.uint8)
-    hand = cv2.dilate(hand, kernel, 1)
+    hand_dilate = cv2.dilate(hand, kernel, 1)
 
-    gradients_float = cv2.Laplacian(depth, cv2.CV_64F, ksize=3)
+    # Get image gradient
+    gradients_float = cv2.Laplacian(depth_diff, cv2.CV_64F, ksize=3)
     gradients_float_abs = gradients_float.clip(min=0)
-    # gradients_float_abs = np.absolute(gradients_float)
     gradients = np.uint8(gradients_float_abs)
-    gradients_bin = cv2.inRange(gradients, 0, 0.5)
-    # cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+    gradients_bin = cv2.inRange(gradients, 0.01, GRADIENT_THRESHOLD) 
 
-    # ret, gradients_bin = cv2.threshold(gradients, 30, 255, cv2.THRESH_BINARY_INV)
-    # ret, gradients_bin2 = cv2.threshold(gradients, 5, 255, cv2.THRESH_BINARY)
+    # Get eroded image of hand contours
+    #    This is mostly for testing, and has minimal impact on the results
+    kernel = np.ones((21,21),np.uint8)
+    hand_erode = cv2.erode(hand, kernel, 1)
 
-    fingers = cv2.bitwise_and(gradients_bin, hand)
+    # Bitwise and to get binary image of finger approximate locations
+    fingers = cv2.bitwise_and(gradients_bin, hand_dilate)
     fingers = cv2.bitwise_and(fingers, mask)
-    fingers = cv2.morphologyEx(fingers, cv2.MORPH_OPEN, kernel)
+    fingers = cv2.bitwise_and(fingers, cv2.bitwise_not(hand_erode))
+    kernel = np.ones((9,9),np.uint8)
+    fingers = cv2.morphologyEx(fingers, cv2.MORPH_CLOSE, kernel)
+
+    # Get all contours
+    __, contours, __ = cv2.findContours(
+            fingers, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+
+    # Define largest area as finger contour
+    best_x = -1
+    best_y = -1
+    best_area = 0
+    best_contour = contour
+    finger_contour = max(contours, key=cv2.contourArea)
+
+    # Return the top point of the contour as the approximate finger location
+    top_point = tuple(finger_contour[finger_contour[:, :, 1].argmin()][0])
+
+    return top_point, [finger_contour]
+
+def smooth_operator(x, y, prev_x, prev_y):
+    """
+    Simple smoothing for finger movement. This only applies if we have noise
+        that would have caused as significant jump in movement
 
 
+    Args:
+        x (float): current finger x-coordinate
+        y (float): current finger y-coordinate
+        prev_x (float): previous finger x-coordinate
+        prev_y (float): previous finger y-coordinate
 
-    cv2.namedWindow("hand")
-    cv2.namedWindow("finger")
-    cv2.namedWindow("finger mask")
-    cv2.imshow('hand', cv2.resize(hand, (int(width/2.), int(height/2.))))
-    cv2.imshow('finger', cv2.resize(fingers, (int(width/2.), int(height/2.))))
-    cv2.imshow('finger mask', cv2.resize(mask, (int(width/2.), int(height/2.))))
-
+    Returns:
+        (x, y): smoothed (x, y) coordinate
+    """
+    dist = ((x-prev_x)**2 + (y-prev_y)**2)**0.5
+    if dist > MAX_JUMP and (prev_x != -1 and prev_y != -1):
+        xp = prev_x + JUMP_VALUE * (x - prev_x)
+        yp = prev_y + JUMP_VALUE * (y - prev_y)
+        return prev_x, prev_y
+    return x, y
 
 
 if __name__ == '__main__':
@@ -589,7 +693,6 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     sequence_dir = os.path.join(SEQUENCE_DIRECTORY, args.sequence_dir)
-    # sequence_dir = SEQUENCE_DIRECTORY + "/" + args.sequence_dir
 
     # RGBD data sequence
     rgb = load_data.load_rgbd(sequence_dir, data='rgb')
@@ -604,6 +707,7 @@ if __name__ == '__main__':
     height = rgb[0].shape[0]
     width = rgb[0].shape[1]
 
+    # This block is for joint data we no longer use-----------------
     # Rescale joint data
     # joints = joints / JOINT_SCALE
 
@@ -624,13 +728,14 @@ if __name__ == '__main__':
     #     J2.append(j_2)
     #     J3.append(j_3)
     #     J4.append(j_4)
+    #----------------------------------------------------------------
 
     # Get RoI bounds
-    # bounds = get_bounds(rgb, N_CALIBRATION_FRAMES)
-
+    bounds = get_bounds(rgb, N_CALIBRATION_FRAMES)
     roi = np.zeros((height,width), dtype = np.uint8)
-    # cv2.fillPoly(roi, pts =[bounds], color=(255,255,255))
-    roi = cv2.bitwise_not(roi)
+    cv2.fillPoly(roi, pts =[bounds], color=(255,255,255))
+
+    # roi = cv2.bitwise_not(roi)
     # bound_rect = cv2.boundingRect(bounds)
     # x, y, w, h = bound_rect
 
@@ -640,63 +745,85 @@ if __name__ == '__main__':
     # cv2.imshow('ex_filled', roi)
     # cv2.waitKey(0)
 
-    # T = get_transform_matrix(bounds)
-    # est_plane = est_plane_equation(d[0], bounds)
+    T = get_transform_matrix(bounds)
+    est_plane = est_plane_equation(d[0], bounds)
 
-    # est_plane_mat = np.zeros(d[0].shape)
-    # for i in range(d[0].shape[0]):
-    #     for j in range(d[0].shape[1]):
-    #         est_plane_mat[i, j] = est_plane(j, i)
+    est_plane_mat = np.zeros(d[0].shape)
+    for i in range(d[0].shape[0]):
+        for j in range(d[0].shape[1]):
+            est_plane_mat[i, j] = est_plane(j, i)
 
-    # for i in range(10):
-    #     plt_depth_diff_map(d[54+i], est_plane_mat)
-    # plt_depth_diff(d[54], est_plane)
+    est_plane_mat = get_min_background(d, N_CALIBRATION_FRAMES)
+    prev_x = -1
+    prev_y = -1
 
-    est_plane_mat = d[0]
+    # Write points to file to use in UI
+    f = open("points.txt", "w")
+    kernel = np.ones((5,5),np.uint8)
 
     for i in range(n_images):
-        kernel = np.ones((5,5),np.uint8)
-
+        # Mask the depth with the ROI, so we ignore pixels outside the projection surface
         depth = cv2.bitwise_and(d[i], d[i], mask = roi)
-        # mask = est_depth_diff(d[i], bounds, est_plane)
-        mask = est_depth_diff_mat(depth, est_plane_mat)
+
+        # Get depth difference map and its binarized version
+        mask_diff, diff_mat = est_depth_diff_mat(depth, est_plane_mat)
+
+        # Get image gradient and AND to remove arm edges
         gradient = depth_gradient(depth)
         gradient = cv2.morphologyEx(gradient, cv2.MORPH_OPEN, kernel)
-        mask = cv2.bitwise_and(mask, gradient)
+        mask = cv2.bitwise_and(mask_diff, gradient)
 
-        
-        # morph_gradient = cv2.morphologyEx(mask, cv2.MORPH_GRADIENT, kernel)
-        # opening = cv2.bitwise_and(mask, cv2.bitwise_not(morph_gradient))
-        # opening = cv2.erode(mask, kernel, 1)
+        # Simple opening with gaussian filter to remove tiny noise
         opening = cv2.dilate(cv2.erode(mask, kernel, 2), kernel, 2)
-        # opening = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
         opening = gaussian_filter(opening, sigma=1.5)
-
         modified_mask = opening
 
+        # Find all contours, then filter for hand
         __, contours, __ = cv2.findContours(
             modified_mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+        filtered_contours = filter_contours(contours)
 
-        filtered_contours = filter_contours(depth, contours)
-
+        # Only find fingers if we can find the hand
         img = np.zeros((modified_mask.shape[0], modified_mask.shape[1], 3), dtype=np.uint8)
         if filtered_contours is not None:
-            finger_mask = est_depth_diff_mat(depth, est_plane_mat, 35, 10)
-            find_finger_contour(depth, finger_mask, filtered_contours)
-            img = cv2.drawContours(img, filtered_contours, -1, (0, 0, 255), 3)
-        
+            img = cv2.drawContours(rgb[i], filtered_contours, -1, (0, 0, 255), 3)
+            finger_mask, __ = est_depth_diff_mat(depth, est_plane_mat, DEPTH_FINGER_THRESHOLD, DEPTH_FINGER_NOISE_THRESHOLD)
+            (fx, fy), finger_contour = find_finger_contour(diff_mat, finger_mask, filtered_contours)
 
+            # Simple smooth if needed
+            if fx != -1 and fy != -1:
+                img = cv2.drawContours(img, finger_contour, -1, (255, 0, 0), 10)
+                cur_x, cur_y = smooth_operator(fx, fy, prev_x, prev_y)
+                cv2.circle(img, (cur_x, cur_y), 21, (0, 255, 0), -1)
+                prev_x = cur_x
+                prev_y = cur_y
+            else:
+                prev_x = -1
+                prev_y = -1
+        else:
+            img = rgb[i]
+            prev_x = -1
+            prev_y = -1
+        
         # img = draw_joints(img, (x, y), J1[i])
 
-        cv2.namedWindow("contours")   
+        cv2.namedWindow("contours")
         cv2.namedWindow("mask")   
-        cv2.namedWindow("opening")   
+        cv2.namedWindow("opening")
+
+        # cv2.imwrite("contours/" + str(i) + ".jpg", img)
 
         cv2.imshow('contours', cv2.resize(img, (int(width/2.), int(height/2.))))
         cv2.imshow('mask', cv2.resize(mask, (int(width/2.), int(height/2.))))
         cv2.imshow('opening', cv2.resize(opening, (int(width/2.), int(height/2.))))
-        print(i)
-        cv2.waitKey()
 
-        # BEST_X = (x + RS.randint(w), y + RS.randint(h))
-        # transform_coords(T, BEST_X)
+        # FPS controls
+        cv2.waitKey(10)
+
+        tcoords = transform_coords(T, (prev_x, prev_y))
+        if tcoords is None:
+            f.write("-1 , -1\n")
+        else:
+            f.write(str(tcoords[1]) + "," + str(tcoords[0]) + "\n")
+    f.close()
+

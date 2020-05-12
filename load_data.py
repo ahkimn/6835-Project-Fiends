@@ -29,7 +29,7 @@ def load_rgbd(directory, data=''):
     img_files = name_file.readlines()
     img_data = []
 
-    for f in img_files[0:100]:
+    for f in img_files:
         img_file = os.path.join(directory, img_dir, f.strip())
         # img_file = directory + "/" + img_dir + "/" + f.strip()
 
