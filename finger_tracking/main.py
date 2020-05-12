@@ -14,8 +14,7 @@ from scipy.ndimage.filters import gaussian_filter
 
 # Directory containing data sequences
 # UPDATE THIS WITH THE LOCATION ON YOUR MACHINE
-# SEQUENCE_DIRECTORY = './data/sequences'
-SEQUENCE_DIRECTORY = '../rgbd_scan/rgbd_scan/rgbd_scan'
+SEQUENCE_DIRECTORY = '../data/sequences'
 
 # Thresholds on HSV hue for selecting RoI
 HUE_HIGH = 15
