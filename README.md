@@ -21,7 +21,9 @@ The following Dropbox link contains the example datasets
 https://www.dropbox.com/sh/y7ip34b92y8yzru/AAARZCA63v2hk80DA-LTsSLAa?dl=0
 
 NOTE: these files are large (around 2GB for each sequence)
-We have saved the output contour overlay for the *stonks* sequence in the *contours* folder.
+* We have saved the output contour overlay for the *stonks* sequence in the *contours* folder.
+* Deprecated folder contours older sequences that no longer work with the Python code. As these were used for some of the presentations, we have kept them here for historical reasons.
+
 
 ## Finger Position Tracking
 
