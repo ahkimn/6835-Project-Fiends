@@ -42,7 +42,7 @@ To run an example of the UI:
 
 - Run index.html which opens the interface in a browser. This is confirmed to work on the latest Google Chrome
 - This works best when the UI is full screen, thus it is advised to put your browser in fullscreen mode.
-- In demo.py, there is a replace **DATA_DIR** with the directory that contains the data sequence from finger tracking. Demo.py will load the data coordinates and execute all of the sequenced coordinates onto the UI. 
+- In demo.py, replace the **DATA_DIR** variable at the top with the directory that contains the data sequence from finger tracking. Demo.py will load the data coordinates and execute all of the sequenced coordinates onto the UI. 
 
 # Dependencies
 - Python >= 3.7
