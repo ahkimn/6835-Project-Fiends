@@ -14,7 +14,8 @@ from scipy.ndimage.filters import gaussian_filter
 
 # Directory containing data sequences
 # UPDATE THIS WITH THE LOCATION ON YOUR MACHINE
-SEQUENCE_DIRECTORY = '../data/sequences'
+PROJECT_ROOT_DIR = os.path.expanduser('~/Projects/MIT/6.835/Final/')
+SEQUENCE_DIRECTORY = os.path.join(PROJECT_ROOT_DIR, 'sequences')
 
 # Thresholds on HSV hue for selecting RoI
 HUE_HIGH = 15
