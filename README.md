@@ -35,6 +35,10 @@ Then, run:
 ```python finger_tracking/main.py --sequence_dir $DIR$```
 where $DIR$ is the subdirectory within **PROJECT_ROOT_DIR**/sequences where the data sequence is located.
 
+NOTES:
+* The output finger coordinates are written to Usage.txt by default. This textfile can be used with the UI to display the drawing output.
+* Line 814 `# cv2.imwrite("contours/" + str(i) + ".jpg", img)` writes out the contour overlayed images. We have disabled it by default to save disk space.
+
 ## User Interface
 
 The UI codebase is located in *./frontend*.
