@@ -23,7 +23,7 @@ def get_depth(event, x, y, flags,param):
 # Main demo code
 if __name__ == "__main__":
     # path = "Z:/Dropbox/Dropbox (MIT)/MIT/2020/Spring/6.835/Project/Code/rgbd_scan/rgbd_scan/data/box2/depth/depth25.png"
-    path = "Z:/Dropbox/Dropbox (MIT)/MIT/2020/Spring/6.835/Project/Code/rgbd_scan/rgbd_scan/rgbd_scan/test0/depth/depth40.png"
+    path = "Z:/Dropbox/Dropbox (MIT)/MIT/2020/Spring/6.835/Project/Code/rgbd_scan/rgbd_scan/rgbd_scan/big_slow0/depth/depth74.png"
     depth = cv2.imread(path, -1)
 
     min_val, max_val, __, __ = cv2.minMaxLoc(depth)
