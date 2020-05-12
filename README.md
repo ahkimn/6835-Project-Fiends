@@ -11,7 +11,9 @@ It can be compiled on run using Visual Studios (we tested on the 2017 version).
 We have only included the source and header files since copying an entire vsproj doesn't work well
 
 OpenCV 3.x.x and Kinect SDK V2 must be included in the project. 
+
 (OpenCV) https://docs.opencv.org/2.4/doc/tutorials/introduction/windows_visual_studio_Opencv/windows_visual_studio_Opencv.html
+
 (Kinect SDK) https://docs.microsoft.com/en-us/previous-versions/windows/kinect/dn799271(v=ieb.10)
 
 As Visual Studio setup is a hassle, we have also included example data sequences captured from our setup.
@@ -25,7 +27,7 @@ We have saved the output contour overlay for the *stonks* sequence in the *conto
 
 The Finger tracking codebase is located in the folder *./finger_tracking*.
 
-Download any sequences from the dropbox link above, and place inside the *./sequence/* folder (at the same level as the example folder)
+Download any sequences from the Dropbox link above, and place inside the *./sequence/* folder (at the same level as the example folder)
 
 To run the main script, which extracts and saves finger positions from a data sequence, first change the line defining the variable **PROJECT_ROOT_DIR** to the root dir of the project on the local machine.
 
